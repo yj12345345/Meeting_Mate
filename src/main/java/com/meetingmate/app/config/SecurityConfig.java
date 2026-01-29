@@ -1,55 +1,92 @@
 package com.meetingmate.app.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.meetingmate.app.exception.ApiErrorResponse;
+import com.meetingmate.app.repository.UserRepository;
 import com.meetingmate.app.security.CustomOAuth2UserService;
+import com.meetingmate.app.security.JwtAuthenticationFilter;
+import com.meetingmate.app.security.JwtProvider;
+import com.meetingmate.app.security.OAuth2SuccessHandler;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.MediaType;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
 
-import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 @Configuration
 @RequiredArgsConstructor
 public class SecurityConfig {
 
     private final CustomOAuth2UserService customOAuth2UserService;
+    private final OAuth2SuccessHandler oAuth2SuccessHandler;
+    private final JwtProvider jwtProvider;
+    private final UserRepository userRepository;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
 
-        ObjectMapper om = new ObjectMapper();
+        JwtAuthenticationFilter jwtFilter = new JwtAuthenticationFilter(jwtProvider, userRepository);
 
         http
                 .csrf(csrf -> csrf.disable())
+                .httpBasic(httpBasic -> httpBasic.disable())
+                .formLogin(form -> form.disable())
+
+                // JWT-only 핵심: 서버 세션 안 씀
+                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+
+                .cors(cors -> cors.configurationSource(request -> {
+                    CorsConfiguration config = new CorsConfiguration();
+                    config.setAllowedOrigins(List.of("http://localhost:5173"));
+                    config.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
+                    config.setAllowedHeaders(List.of("*"));
+                    config.setAllowCredentials(true); // 쿠키 사용 시 필수
+                    return config;
+                }))
+
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/test/**").permitAll()
-                        .requestMatchers("/api/user/me").authenticated()
-                        .anyRequest().authenticated()
+                        // 프리플라이트
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+
+                        // 공개
+                        .requestMatchers(
+                                "/",
+                                "/error",
+                                "/test/**",
+                                "/auth/**",
+                                "/oauth2/**",
+                                "/login/**",
+                                "/swagger-ui/**",
+                                "/swagger-ui.html",
+                                "/v3/api-docs/**"
+                        ).permitAll()
+
+                        // 나머지 API는 JWT 필요
+                        .requestMatchers("/api/**").authenticated()
+                        .anyRequest().permitAll()
                 )
-                // ✅ 여기 추가: API 요청에서 리다이렉트(302) 대신 JSON 401/403
-                .exceptionHandling(e -> e
-                        .authenticationEntryPoint((req, res, ex) -> {
-                            res.setStatus(401);
-                            res.setCharacterEncoding(StandardCharsets.UTF_8.name());
-                            res.setContentType(MediaType.APPLICATION_JSON_VALUE);
-                            om.writeValue(res.getWriter(), new ApiErrorResponse("UNAUTHORIZED", "인증이 필요합니다."));
-                        })
-                        .accessDeniedHandler((req, res, ex) -> {
-                            res.setStatus(403);
-                            res.setCharacterEncoding(StandardCharsets.UTF_8.name());
-                            res.setContentType(MediaType.APPLICATION_JSON_VALUE);
-                            om.writeValue(res.getWriter(), new ApiErrorResponse("FORBIDDEN", "접근 권한이 없습니다."));
-                        })
-                )
+
                 .oauth2Login(oauth -> oauth
-                        .userInfoEndpoint(userInfo -> userInfo.userService(customOAuth2UserService))
-                        .defaultSuccessUrl("/api/groups/me", true)
-                );
+                        .userInfoEndpoint(userInfo -> userInfo
+                                .userService(customOAuth2UserService)
+                        )
+                        .successHandler(oAuth2SuccessHandler)
+                )
+
+                // JWT 필터를 Security 앞단에
+                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+
+                // 기본 설정 일부
+                .logout(Customizer.withDefaults());
 
         return http.build();
     }
+
 }

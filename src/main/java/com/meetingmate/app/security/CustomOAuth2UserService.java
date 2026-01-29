@@ -1,5 +1,6 @@
 package com.meetingmate.app.security;
 
+import com.meetingmate.app.domain.user.AuthProvider;
 import com.meetingmate.app.domain.user.User;
 import com.meetingmate.app.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -21,16 +22,19 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         Long kakaoId = ((Number) oAuth2User.getAttributes().get("id")).longValue();
         String oauthId = String.valueOf(kakaoId);
 
-        User user = userRepository.findByOauthId(oauthId)
+        User user = userRepository
+                .findByOauthIdAndProvider(oauthId, AuthProvider.KAKAO)
                 .orElseGet(() -> {
                     User newUser = User.builder()
+                            .provider(AuthProvider.KAKAO)   // ⭐ 중요
                             .oauthId(oauthId)
                             .email(null)
+                            .password(null)
                             .nickname("카카오유저" + oauthId)
                             .build();
                     return userRepository.save(newUser);
                 });
-
-        return new UserPrincipal(user, oAuth2User.getAttributes());
+        User saved = userRepository.save(user);
+        return new UserPrincipal(saved, oAuth2User.getAttributes());
     }
 }

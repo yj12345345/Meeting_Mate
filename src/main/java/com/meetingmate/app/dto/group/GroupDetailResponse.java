@@ -12,4 +12,5 @@ public class GroupDetailResponse {
     private String description;
     private Long hostUserId;
     private long memberCount;
+    private String inviteCode;
 }

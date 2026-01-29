@@ -153,6 +153,7 @@ public class GroupService {
                 .description(group.getDescription())
                 .hostUserId(group.getHostUserId())
                 .memberCount(memberCount)
+                .inviteCode(group.getInviteCode())
                 .build();
     }
 }
